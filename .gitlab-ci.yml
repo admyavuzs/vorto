@@ -1,0 +1,44 @@
+before_script:
+  - mkdir -p /go/src/gitlab.example.com/librerio/
+  - ln -s $PWD ${APP_PATH}
+  - mkdir -p ${APP_PATH}/vendor
+  - cd ${APP_PATH}
+
+stages:
+  - setup
+  - test
+  - build
+  - release
+  - set-conf
+  - deploy
+
+variables:
+  DOCKER_DRIVER: overlay2
+  CLUSTER_ZONE: europe-north1-a
+  GCP_PROJECT_ID: disco-outpost-286710
+  CLUSTER_NAME: poweredit-gke
+
+  KUBECONFIG: /etc/deploy/config
+  STAGING_NAMESPACE: gitlab
+  PRODUCTION_NAMESPACE: gitlab
+
+deploy_staging:
+  stage: deploy
+  image: quay.io/evl.ms/gcloud-helm:285.0.1
+  before_script:
+    - helm repo add stable https://kubernetes-charts.storage.googleapis.com/
+    - helm repo add incubator https://kubernetes-charts-incubator.storage.googleapis.com/
+    - helm repo update
+  script:
+    - echo $GKE_SERVICE_ACCOUNT | base64 -d > ${HOME}/gcloud-service-key.json
+    - gcloud auth activate-service-account --key-file ${HOME}/gcloud-service-key.json
+    - gcloud config set project $GCP_PROJECT_ID
+    - gcloud container clusters get-credentials $CLUSTER_NAME --zone $CLUSTER_ZONE --project $GCP_PROJECT_ID
+    - export API_VERSION="$(grep "appVersion" Chart.yaml | cut -d" " -f2)"
+    - export RELEASE_NAME="go-hello-v${API_VERSION/./-}"
+    - export DEPLOYS=$(helm ls | grep $RELEASE_NAME | wc -l)
+    - if [ ${DEPLOYS}  -eq 0 ]; then helm upgrade --install ${RELEASE_NAME}  helm/ --namespace ${STAGING_NAMESPACE}; else helm upgrade --install ${RELEASE_NAME} helm/ --namespace ${STAGING_NAMESPACE} ; fi
+  environment:
+    name: staging
+  only:
+  - master
